@@ -1,6 +1,7 @@
 //! Some helpers for working with RocksDB databases.
 
 use ::rocksdb::{DBCompressionType, DBIterator, IteratorMode, Options, DB};
+use std::borrow::Cow;
 use std::marker::PhantomData;
 use std::path::Path;
 use std::sync::Arc;
@@ -73,8 +74,8 @@ pub trait Table<M>: Sized {
     fn value_to_bytes(key: &Self::Value) -> Result<Self::ValueBytes, Self::Error>;
     fn index_to_bytes(index: &Self::Index) -> Result<Self::IndexBytes, Self::Error>;
 
-    fn bytes_to_key<T: AsRef<[u8]>>(bytes: T) -> Result<Self::Key, Self::Error>;
-    fn bytes_to_value<T: AsRef<[u8]>>(bytes: T) -> Result<Self::Value, Self::Error>;
+    fn bytes_to_key(bytes: Cow<[u8]>) -> Result<Self::Key, Self::Error>;
+    fn bytes_to_value(bytes: Cow<[u8]>) -> Result<Self::Value, Self::Error>;
 
     fn default_compression_type() -> Option<DBCompressionType> {
         None
@@ -147,7 +148,7 @@ pub trait Table<M>: Sized {
             .get_pinned(key_bytes)
             .map_err(error::Error::from)?
             .map_or(Ok(None), |value_bytes| {
-                Self::bytes_to_value(value_bytes).map(Some)
+                Self::bytes_to_value(Cow::from(value_bytes.as_ref())).map(Some)
             })
     }
 
@@ -162,8 +163,8 @@ pub trait Table<M>: Sized {
         for result in iterator {
             let (key_bytes, value_bytes) = result.map_err(error::Error::from)?;
             if key_bytes.starts_with(index_bytes.as_ref()) {
-                let key = Self::bytes_to_key(key_bytes)?;
-                let value = Self::bytes_to_value(value_bytes)?;
+                let key = Self::bytes_to_key(Cow::from(Vec::from(key_bytes)))?;
+                let value = Self::bytes_to_value(Cow::from(Vec::from(value_bytes)))?;
 
                 pairs.push((key, value));
             } else {
@@ -202,8 +203,10 @@ impl<'a, M: mode::Mode, T: Table<M>> Iterator for TableIterator<'a, M, T> {
             result
                 .map_err(|error| T::Error::from(error.into()))
                 .and_then(|(key_bytes, value_bytes)| {
-                    T::bytes_to_key(key_bytes)
-                        .and_then(|key| T::bytes_to_value(value_bytes).map(|value| (key, value)))
+                    T::bytes_to_key(Cow::from(Vec::from(key_bytes))).and_then(|key| {
+                        T::bytes_to_value(Cow::from(Vec::from(value_bytes)))
+                            .map(|value| (key, value))
+                    })
                 })
         })
     }
@@ -255,11 +258,11 @@ mod tests {
             Ok(index.as_bytes().to_vec())
         }
 
-        fn bytes_to_key<T: AsRef<[u8]>>(bytes: T) -> Result<Self::Key, Self::Error> {
+        fn bytes_to_key(bytes: Cow<[u8]>) -> Result<Self::Key, Self::Error> {
             Ok(std::str::from_utf8(bytes.as_ref())?.to_string())
         }
 
-        fn bytes_to_value<T: AsRef<[u8]>>(bytes: T) -> Result<Self::Value, Self::Error> {
+        fn bytes_to_value(bytes: Cow<[u8]>) -> Result<Self::Value, Self::Error> {
             Ok(u64::from_be_bytes(
                 bytes.as_ref()[0..8]
                     .try_into()
