@@ -1,0 +1,18 @@
+[package]
+name = "rocksdb-table"
+authors = ["Travis Brown <travisrobertbrown@gmail.com>"]
+homepage = "https://github.com/travisbrown/rocksdb-table"
+repository = "https://github.com/travisbrown/rocksdb-table"
+description = "Some helpers for working with RocksDB databases"
+keywords = ["rocksdb"]
+license-file = "LICENSE"
+readme = "README.md"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rocksdb = { version = "0.19" }
+thiserror = "1"
+
+[dev-dependencies]
+tempfile = "3"
