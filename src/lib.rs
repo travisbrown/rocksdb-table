@@ -1,17 +1,12 @@
 //! Some helpers for working with RocksDB databases.
 
-use ::rocksdb::{DBCompressionType, DBIterator, IteratorMode, Options, DB};
+use rocksdb::{DBCompressionType, DBIterator, IteratorMode, Options, DB};
 use std::borrow::Cow;
 use std::marker::PhantomData;
 use std::path::Path;
 use std::sync::Arc;
 
 pub mod error;
-
-/// Some RocksDB exports for convenience.
-pub mod rocksdb {
-    pub use rocksdb::DBCompressionType;
-}
 
 /// Marker structs that indicate access mode.
 pub mod mode {
