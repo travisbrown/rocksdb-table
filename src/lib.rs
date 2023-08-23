@@ -208,6 +208,21 @@ pub trait Table<M>: Sized {
         }
     }
 
+    fn iter_selected_values<P: Fn(&Self::Key) -> bool>(
+        &self,
+        pred: P,
+    ) -> SelectedValueTableIterator<'_, M, Self, P>
+    where
+        M: 'static,
+    {
+        SelectedValueTableIterator {
+            pred,
+            underlying: self.database().db.iterator(IteratorMode::Start),
+            _mode: PhantomData,
+            _table: PhantomData,
+        }
+    }
+
     fn lookup_key(&self, key: &Self::Key) -> Result<Option<Self::Value>, Self::Error> {
         let key_bytes = Self::key_to_bytes(key)?;
         self.database()
@@ -284,6 +299,37 @@ impl<'a, M: mode::Mode, T: Table<M>> Iterator for TableIterator<'a, M, T> {
                     T::bytes_to_key(Cow::from(Vec::from(key_bytes))).and_then(|key| {
                         T::bytes_to_value(Cow::from(Vec::from(value_bytes)))
                             .map(|value| (key, value))
+                    })
+                })
+        })
+    }
+}
+
+/// Allows selection of values to decode (if for example this is expensive)
+pub struct SelectedValueTableIterator<'a, M, T, P> {
+    pred: P,
+    underlying: DBIterator<'a>,
+    _mode: PhantomData<M>,
+    _table: PhantomData<T>,
+}
+
+impl<'a, M: mode::Mode, T: Table<M>, P: Fn(&T::Key) -> bool> Iterator
+    for SelectedValueTableIterator<'a, M, T, P>
+{
+    type Item = Result<(T::Key, Option<T::Value>), T::Error>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.underlying.next().map(|result| {
+            result
+                .map_err(|error| T::Error::from(error.into()))
+                .and_then(|(key_bytes, value_bytes)| {
+                    T::bytes_to_key(Cow::from(Vec::from(key_bytes))).and_then(|key| {
+                        if (self.pred)(&key) {
+                            T::bytes_to_value(Cow::from(Vec::from(value_bytes)))
+                                .map(|value| (key, Some(value)))
+                        } else {
+                            Ok((key, None))
+                        }
                     })
                 })
         })
