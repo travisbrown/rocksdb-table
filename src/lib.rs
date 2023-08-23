@@ -18,13 +18,27 @@ pub mod mode {
     /// Indicates whether a database is opened in read-only or write mode.
     pub trait Mode: 'static {
         fn is_read_only() -> bool;
+        fn is_secondary() -> bool;
+        fn is_primary() -> bool {
+            !Self::is_read_only() && !Self::is_secondary()
+        }
     }
 
     /// Indicates that a database is opened in write mode.
-    pub trait IsWriteable {}
+    pub trait IsWriteable: Mode {}
+
+    /// Indicates that a database is opened in secondary mode and can try to catch up with the primary.
+    pub trait IsSecondary: Mode {}
+
+    /// Indicates that a database is opened in a mode that only requires a single path (i.e. not
+    /// secondary mode).
+    pub trait SinglePath: Mode {}
 
     #[derive(Clone, Copy)]
     pub struct ReadOnly;
+
+    #[derive(Clone, Copy)]
+    pub struct Secondary;
 
     #[derive(Clone, Copy)]
     pub struct Writeable;
@@ -33,15 +47,36 @@ pub mod mode {
         fn is_read_only() -> bool {
             true
         }
+
+        fn is_secondary() -> bool {
+            false
+        }
+    }
+
+    impl Mode for Secondary {
+        fn is_read_only() -> bool {
+            false
+        }
+
+        fn is_secondary() -> bool {
+            true
+        }
     }
 
     impl Mode for Writeable {
         fn is_read_only() -> bool {
             false
         }
+
+        fn is_secondary() -> bool {
+            false
+        }
     }
 
     impl IsWriteable for Writeable {}
+    impl IsSecondary for Secondary {}
+    impl SinglePath for ReadOnly {}
+    impl SinglePath for Writeable {}
 }
 
 /// A wrapper for a RocksDB database that maintains type information about whether it was opened
@@ -94,9 +129,25 @@ pub trait Table<M>: Sized {
 
     fn open_with_defaults<P: AsRef<Path>>(path: P) -> Result<Self, error::Error>
     where
-        M: mode::Mode,
+        M: mode::SinglePath,
     {
         Self::open(path, |mut options| {
+            if let Some(compression_type) = Self::default_compression_type() {
+                options.set_compression_type(compression_type);
+            }
+
+            options
+        })
+    }
+
+    fn open_as_secondary_with_defaults<P: AsRef<Path>, S: AsRef<Path>>(
+        path: P,
+        secondary_path: S,
+    ) -> Result<Self, error::Error>
+    where
+        M: mode::IsSecondary,
+    {
+        Self::open_as_secondary(path, secondary_path, |mut options| {
             if let Some(compression_type) = Self::default_compression_type() {
                 options.set_compression_type(compression_type);
             }
@@ -110,7 +161,7 @@ pub trait Table<M>: Sized {
         mut options_init: F,
     ) -> Result<Self, error::Error>
     where
-        M: mode::Mode,
+        M: mode::SinglePath,
     {
         let mut options = Options::default();
         options.create_if_missing(true);
@@ -122,6 +173,27 @@ pub trait Table<M>: Sized {
         } else {
             DB::open(&options, path)?
         };
+
+        Ok(Self::from_database(Database {
+            db: Arc::new(db),
+            options,
+            _mode: PhantomData,
+        }))
+    }
+
+    fn open_as_secondary<P: AsRef<Path>, S: AsRef<Path>, F: FnMut(Options) -> Options>(
+        path: P,
+        secondary_path: S,
+        mut options_init: F,
+    ) -> Result<Self, error::Error>
+    where
+        M: mode::IsSecondary,
+    {
+        let mut options = Options::default();
+        options.create_if_missing(true);
+
+        let options = options_init(options);
+        let db = DB::open_as_secondary(&options, path.as_ref(), secondary_path.as_ref())?;
 
         Ok(Self::from_database(Database {
             db: Arc::new(db),
@@ -185,6 +257,17 @@ pub trait Table<M>: Sized {
             .database()
             .db
             .put(key_bytes, value_bytes)
+            .map_err(error::Error::from)?)
+    }
+
+    fn catch_up_with_primary(&self) -> Result<(), Self::Error>
+    where
+        M: mode::IsSecondary,
+    {
+        Ok(self
+            .database()
+            .db
+            .try_catch_up_with_primary()
             .map_err(error::Error::from)?)
     }
 }
