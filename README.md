@@ -1,6 +1,6 @@
 # rocksdb-table
 
-[![Rust build status](https://img.shields.io/github/workflow/status/travisbrown/rocksdb-table/rust-ci.svg?label=rust)](https://github.com/travisbrown/rocksdb-table/actions)
+[![Rust build status](https://img.shields.io/github/actions/workflow/status/travisbrown/rocksdb-table/ci.yaml?branch=main)](https://github.com/travisbrown/rocksdb-table/actions)
 [![Coverage status](https://img.shields.io/codecov/c/github/travisbrown/rocksdb-table/main.svg)](https://codecov.io/github/travisbrown/rocksdb-table)
 
 This library is intended to capture some common patterns I use for working with [RocksDB][rocksdb]
