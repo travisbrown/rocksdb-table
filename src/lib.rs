@@ -101,7 +101,7 @@ pub trait Table<M>: Sized {
     fn get_counts(&self) -> Result<Self::Counts, Self::Error>;
 
     fn key_to_bytes(key: &Self::Key) -> Result<Self::KeyBytes, Self::Error>;
-    fn value_to_bytes(key: &Self::Value) -> Result<Self::ValueBytes, Self::Error>;
+    fn value_to_bytes(value: &Self::Value) -> Result<Self::ValueBytes, Self::Error>;
     fn index_to_bytes(index: &Self::Index) -> Result<Self::IndexBytes, Self::Error>;
 
     fn bytes_to_key(bytes: Cow<[u8]>) -> Result<Self::Key, Self::Error>;
