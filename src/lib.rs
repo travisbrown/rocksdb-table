@@ -83,8 +83,6 @@ pub struct Database<M> {
     _mode: PhantomData<M>,
 }
 
-type Pairs<K, V> = Vec<(K, V)>;
-
 /// A database table.
 pub trait Table<M>: Sized {
     type Counts;
@@ -216,8 +214,8 @@ pub trait Table<M>: Sized {
         M: 'static,
     {
         SelectedValueTableIterator {
-            pred,
             underlying: self.database().db.iterator(IteratorMode::Start),
+            pred,
             _mode: PhantomData,
             _table: PhantomData,
         }
@@ -234,27 +232,39 @@ pub trait Table<M>: Sized {
             })
     }
 
-    fn lookup_index(
+    fn lookup_index(&self, index: &Self::Index) -> IndexIterator<'_, M, Self>
+    where
+        M: 'static,
+    {
+        match Self::index_to_bytes(index) {
+            Ok(index_bytes) => IndexIterator::ValidIndex {
+                underlying: self.database().db.prefix_iterator(&index_bytes),
+                index_bytes: index_bytes,
+                _mode: PhantomData,
+                _table: PhantomData,
+            },
+            Err(error) => IndexIterator::InvalidIndex { error: Some(error) },
+        }
+    }
+
+    fn lookup_index_selected_values<P: Fn(&Self::Key) -> bool>(
         &self,
         index: &Self::Index,
-    ) -> Result<Pairs<Self::Key, Self::Value>, Self::Error> {
-        let index_bytes = Self::index_to_bytes(index)?;
-        let iterator = self.database().db.prefix_iterator(index_bytes.as_ref());
-        let mut pairs = vec![];
-
-        for result in iterator {
-            let (key_bytes, value_bytes) = result.map_err(error::Error::from)?;
-            if key_bytes.starts_with(index_bytes.as_ref()) {
-                let key = Self::bytes_to_key(Cow::from(Vec::from(key_bytes)))?;
-                let value = Self::bytes_to_value(Cow::from(Vec::from(value_bytes)))?;
-
-                pairs.push((key, value));
-            } else {
-                break;
-            }
+        pred: P,
+    ) -> SelectedValueIndexIterator<'_, M, Self, P>
+    where
+        M: 'static,
+    {
+        match Self::index_to_bytes(index) {
+            Ok(index_bytes) => SelectedValueIndexIterator::ValidIndex {
+                underlying: self.database().db.prefix_iterator(&index_bytes),
+                index_bytes: index_bytes,
+                pred,
+                _mode: PhantomData,
+                _table: PhantomData,
+            },
+            Err(error) => SelectedValueIndexIterator::InvalidIndex { error: Some(error) },
         }
-
-        Ok(pairs)
     }
 
     fn put(&self, key: &Self::Key, value: &Self::Value) -> Result<(), Self::Error>
@@ -305,10 +315,10 @@ impl<'a, M: mode::Mode, T: Table<M>> Iterator for TableIterator<'a, M, T> {
     }
 }
 
-/// Allows selection of values to decode (if for example this is expensive)
+/// Allows selection of values to decode (if for example this is expensive).
 pub struct SelectedValueTableIterator<'a, M, T, P> {
-    pred: P,
     underlying: DBIterator<'a>,
+    pred: P,
     _mode: PhantomData<M>,
     _table: PhantomData<T>,
 }
@@ -333,6 +343,97 @@ impl<'a, M: mode::Mode, T: Table<M>, P: Fn(&T::Key) -> bool> Iterator
                     })
                 })
         })
+    }
+}
+
+pub enum IndexIterator<'a, M, T: Table<M>> {
+    ValidIndex {
+        underlying: DBIterator<'a>,
+        index_bytes: T::IndexBytes,
+        _mode: PhantomData<M>,
+        _table: PhantomData<T>,
+    },
+    InvalidIndex {
+        error: Option<T::Error>,
+    },
+}
+
+impl<'a, M: mode::Mode, T: Table<M>> Iterator for IndexIterator<'a, M, T> {
+    type Item = Result<(T::Key, T::Value), T::Error>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            IndexIterator::ValidIndex {
+                underlying,
+                index_bytes,
+                ..
+            } => underlying.next().and_then(|result| match result {
+                Ok((key_bytes, value_bytes)) => {
+                    if key_bytes.starts_with(index_bytes.as_ref()) {
+                        Some(
+                            T::bytes_to_key(Cow::from(Vec::from(key_bytes))).and_then(|key| {
+                                T::bytes_to_value(Cow::from(Vec::from(value_bytes)))
+                                    .map(|value| (key, value))
+                            }),
+                        )
+                    } else {
+                        None
+                    }
+                }
+                Err(error) => Some(Err(T::Error::from(error.into()))),
+            }),
+            IndexIterator::InvalidIndex { error } => error.take().map(Err),
+        }
+    }
+}
+
+/// Allows selection of values to decode (if for example this is expensive).
+pub enum SelectedValueIndexIterator<'a, M, T: Table<M>, P> {
+    ValidIndex {
+        underlying: DBIterator<'a>,
+        index_bytes: T::IndexBytes,
+        pred: P,
+        _mode: PhantomData<M>,
+        _table: PhantomData<T>,
+    },
+    InvalidIndex {
+        error: Option<T::Error>,
+    },
+}
+
+impl<'a, M: mode::Mode, T: Table<M>, P: Fn(&T::Key) -> bool> Iterator
+    for SelectedValueIndexIterator<'a, M, T, P>
+{
+    type Item = Result<(T::Key, Option<T::Value>), T::Error>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            SelectedValueIndexIterator::ValidIndex {
+                underlying,
+                index_bytes,
+                pred,
+                ..
+            } => underlying.next().and_then(|result| match result {
+                Ok((key_bytes, value_bytes)) => {
+                    if key_bytes.starts_with(index_bytes.as_ref()) {
+                        Some(
+                            T::bytes_to_key(Cow::from(Vec::from(key_bytes))).and_then(|key| {
+                                if (pred)(&key) {
+                                    T::bytes_to_value(Cow::from(Vec::from(value_bytes)))
+                                        .map(|value| (key, Some(value)))
+                                } else {
+                                    Ok((key, None))
+                                }
+                            }),
+                        )
+                    } else {
+                        None
+                    }
+                }
+                Err(error) => Some(Err(T::Error::from(error.into()))),
+            }),
+            SelectedValueIndexIterator::InvalidIndex { error } => error.take().map(Err),
+        }
     }
 }
 
@@ -446,7 +547,10 @@ mod tests {
         }
 
         assert_eq!(
-            &dictionary.lookup_index(&"ba".to_string()).unwrap(),
+            &dictionary
+                .lookup_index(&"ba".to_string())
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap(),
             &contents()[0..2].to_vec()
         );
     }
