@@ -306,8 +306,8 @@ impl<'a, M: mode::Mode, T: Table<M>> Iterator for TableIterator<'a, M, T> {
             result
                 .map_err(|error| T::Error::from(error.into()))
                 .and_then(|(key_bytes, value_bytes)| {
-                    T::bytes_to_key(Cow::from(Vec::from(key_bytes))).and_then(|key| {
-                        T::bytes_to_value(Cow::from(Vec::from(value_bytes)))
+                    T::bytes_to_key(Cow::from(key_bytes.as_ref())).and_then(|key| {
+                        T::bytes_to_value(Cow::from(value_bytes.as_ref()))
                             .map(|value| (key, value))
                     })
                 })
@@ -333,9 +333,9 @@ impl<'a, M: mode::Mode, T: Table<M>, P: Fn(&T::Key) -> bool> Iterator
             result
                 .map_err(|error| T::Error::from(error.into()))
                 .and_then(|(key_bytes, value_bytes)| {
-                    T::bytes_to_key(Cow::from(Vec::from(key_bytes))).and_then(|key| {
+                    T::bytes_to_key(Cow::from(key_bytes.as_ref())).and_then(|key| {
                         if (self.pred)(&key) {
-                            T::bytes_to_value(Cow::from(Vec::from(value_bytes)))
+                            T::bytes_to_value(Cow::from(value_bytes.as_ref()))
                                 .map(|value| (key, Some(value)))
                         } else {
                             Ok((key, None))
