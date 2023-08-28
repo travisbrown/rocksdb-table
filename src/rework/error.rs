@@ -14,4 +14,6 @@ pub enum Error {
 pub enum TableConfigError {
     #[error("Expected a single table")]
     ExpectedSingleTable,
+    #[error("Expected a named table")]
+    ExpectedNamedTable,
 }

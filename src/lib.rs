@@ -240,7 +240,7 @@ pub trait Table<M>: Sized {
         match Self::index_to_bytes(index) {
             Ok(index_bytes) => IndexIterator::ValidIndex {
                 underlying: self.database().db.prefix_iterator(&index_bytes),
-                index_bytes: index_bytes,
+                index_bytes,
                 _mode: PhantomData,
                 _table: PhantomData,
             },
@@ -259,7 +259,7 @@ pub trait Table<M>: Sized {
         match Self::index_to_bytes(index) {
             Ok(index_bytes) => SelectedValueIndexIterator::ValidIndex {
                 underlying: self.database().db.prefix_iterator(&index_bytes),
-                index_bytes: index_bytes,
+                index_bytes,
                 pred,
                 _mode: PhantomData,
                 _table: PhantomData,

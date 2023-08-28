@@ -104,17 +104,33 @@ pub enum TableConfig {
 }
 
 impl TableConfig {
-    pub fn from_table_1<const N1: usize, T1: Table<N1>>(table_1: &NamedTable<T1>) -> Self {
-        match table_1.cf_descriptor() {
-            Some(cf_descriptor_1) => Self::WithCfs {
-                cf_descriptors: vec![cf_descriptor_1],
+    pub fn new<const N: usize, T: Table<N>>(table: &NamedTable<T>) -> Self {
+        match table.cf_descriptor() {
+            Some(cf_descriptor) => Self::WithCfs {
+                cf_descriptors: vec![cf_descriptor],
             },
             None => {
                 let mut options = Options::default();
-                T1::configure_options(&mut options);
+                T::configure_options(&mut options);
 
                 Self::WithoutCfs { options }
             }
+        }
+    }
+
+    pub fn with<const N: usize, T: Table<N>>(
+        self,
+        table: &NamedTable<T>,
+    ) -> Result<Self, error::TableConfigError> {
+        match table.cf_descriptor() {
+            Some(cf_descriptor) => match self {
+                Self::WithCfs { mut cf_descriptors } => {
+                    cf_descriptors.push(cf_descriptor);
+                    Ok(Self::WithCfs { cf_descriptors })
+                }
+                Self::WithoutCfs { .. } => Err(error::TableConfigError::ExpectedNamedTable),
+            },
+            None => Err(error::TableConfigError::ExpectedSingleTable),
         }
     }
 
@@ -192,6 +208,25 @@ impl<M: mode::Mode, D: db::Db> Database<M, D> {
     }
 }
 
+pub enum Putter<'a, D: db::Db + 'a, const N: usize, T: Table<N>> {
+    WithCfs(Arc<D>, D::CfHandle<'a>, PhantomData<T>),
+    WithoutCfs(Arc<D>, PhantomData<T>),
+}
+
+impl<'a, D: db::Db + 'a, const N: usize, T: Table<N>> Putter<'a, D, N, T> {
+    pub fn put(&self, key: &T::Key, value: &T::Value) -> Result<(), T::Error> {
+        let key_bytes = T::key_to_bytes(key)?;
+        let value_bytes = T::value_to_bytes(value)?;
+
+        match self {
+            Self::WithCfs(db, handle, _) => db
+                .put_cf(handle, key_bytes, value_bytes)
+                .map_err(T::Error::from),
+            Self::WithoutCfs(db, _) => db.put(key_bytes, value_bytes).map_err(T::Error::from),
+        }
+    }
+}
+
 impl<D: db::Db> Database<mode::Writeable, D> {
     pub fn put<const N: usize, T: Table<N>>(
         &self,
@@ -216,13 +251,57 @@ impl<D: db::Db> Database<mode::Writeable, D> {
             None => self.db.put(key_bytes, value_bytes).map_err(T::Error::from),
         }
     }
+
+    pub fn merge<const N: usize, T: Table<N>>(
+        &self,
+        table: &NamedTable<T>,
+        key: &T::Key,
+        value: &T::Value,
+    ) -> Result<(), T::Error> {
+        let key_bytes = T::key_to_bytes(key)?;
+        let value_bytes = T::value_to_bytes(value)?;
+
+        match &table.name {
+            Some(name) => {
+                let handle = self
+                    .db
+                    .cf_handle(name)
+                    .ok_or_else(|| error::Error::InvalidCfName(name.clone()))?;
+
+                self.db
+                    .merge_cf(&handle, key_bytes, value_bytes)
+                    .map_err(T::Error::from)
+            }
+            None => self
+                .db
+                .merge(key_bytes, value_bytes)
+                .map_err(T::Error::from),
+        }
+    }
+
+    pub fn putter<const N: usize, T: Table<N>>(
+        &self,
+        table: &NamedTable<T>,
+    ) -> Result<Putter<D, N, T>, T::Error> {
+        match &table.name {
+            Some(name) => {
+                let handle = self
+                    .db
+                    .cf_handle(name)
+                    .ok_or_else(|| error::Error::InvalidCfName(name.clone()))?;
+
+                Ok(Putter::WithCfs(self.db.clone(), handle, PhantomData))
+            }
+            None => Ok(Putter::WithoutCfs(self.db.clone(), PhantomData)),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use chrono::{DateTime, TimeZone, Utc};
-    use rocksdb::{DBWithThreadMode, MultiThreaded, MergeOperands};
+    use rocksdb::{DBWithThreadMode, MergeOperands, MultiThreaded};
 
     #[derive(thiserror::Error, Debug)]
     pub enum Error {
@@ -309,14 +388,16 @@ mod tests {
             let bytes: Result<[u8; 4], _> = value[0..4].try_into();
             sum += u32::from_be_bytes(bytes.unwrap());
         }
+
         Some(sum.to_be_bytes().to_vec())
     }
 
     #[test]
     fn db() {
         let directory = tempfile::tempdir().unwrap();
-        let table = NamedTable::<CountsDb>::new_cf("foo");
-        let config = TableConfig::from_table_1(&table);
+        let table_foo = NamedTable::<CountsDb>::new_cf("foo");
+        let table_bar = NamedTable::<CountsDb>::new_cf("bar");
+        let config = TableConfig::new(&table_foo).with(&table_bar).unwrap();
         let database = Database::<mode::Writeable, DBWithThreadMode<MultiThreaded>>::open(
             config,
             directory.path(),
@@ -332,32 +413,63 @@ mod tests {
                 (456, Utc.timestamp_opt(1693222131, 0).single().unwrap()),
                 200,
             ),
+            (
+                (456, Utc.timestamp_opt(1693222131, 0).single().unwrap()),
+                14,
+            ),
+            (
+                (123, Utc.timestamp_opt(1693226042, 0).single().unwrap()),
+                100,
+            ),
         ];
 
+        let expected_values = vec![
+            (
+                (123, Utc.timestamp_opt(1693225042, 0).single().unwrap()),
+                100,
+            ),
+            (
+                (123, Utc.timestamp_opt(1693226042, 0).single().unwrap()),
+                100,
+            ),
+            (
+                (456, Utc.timestamp_opt(1693222131, 0).single().unwrap()),
+                214,
+            ),
+        ];
+
+        //let putter = database.putter(&table).unwrap();
+
         for ((id, timestamp), count) in &values {
-            database.put(&table, &(*id, *timestamp), count).unwrap();
+            database
+                .merge(&table_foo, &(*id, *timestamp), count)
+                .unwrap();
         }
 
         let read_values = database
-            .iter(&table)
+            .iter(&table_foo)
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
 
-        assert_eq!(read_values, values);
+        let read_values_123 = database
+            .iter_index(&table_foo, 123)
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
 
-        /*
-        let dictionary = Dictionary::<mode::Writeable>::open_with_defaults(directory).unwrap();
+        let expected_values_123 = expected_values[0..2].to_vec();
 
-        for (key, value) in contents() {
-            dictionary.put(&key.to_string(), &value).unwrap();
-        }
+        assert_eq!(read_values, expected_values);
+        assert_eq!(read_values_123, expected_values_123);
 
-        assert_eq!(dictionary.lookup_key(&"foo".to_string()).unwrap(), Some(1));
         assert_eq!(
-            dictionary.lookup_key(&"bar".to_string()).unwrap(),
-            Some(1000)
+            database
+                .iter(&table_bar)
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap(),
+            vec![]
         );
-        assert_eq!(dictionary.lookup_key(&"XYZ".to_string()).unwrap(), None);*/
     }
 }
