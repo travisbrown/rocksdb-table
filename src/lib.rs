@@ -7,6 +7,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 pub mod error;
+pub mod rework;
 
 /// Marker structs that indicate access mode.
 pub mod mode {

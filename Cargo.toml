@@ -15,4 +15,5 @@ rocksdb = { version = "0.21" }
 thiserror = "1"
 
 [dev-dependencies]
+chrono = "0.4"
 tempfile = "3"
