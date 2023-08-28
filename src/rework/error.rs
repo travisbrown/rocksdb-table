@@ -9,3 +9,9 @@ pub enum Error {
     #[error("Invalid column family name")]
     InvalidCfName(String),
 }
+
+#[derive(thiserror::Error, Debug)]
+pub enum TableConfigError {
+    #[error("Expected a single table")]
+    ExpectedSingleTable,
+}

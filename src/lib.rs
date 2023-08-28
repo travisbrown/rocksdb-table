@@ -308,8 +308,7 @@ impl<'a, M: mode::Mode, T: Table<M>> Iterator for TableIterator<'a, M, T> {
                 .map_err(|error| T::Error::from(error.into()))
                 .and_then(|(key_bytes, value_bytes)| {
                     T::bytes_to_key(Cow::from(key_bytes.as_ref())).and_then(|key| {
-                        T::bytes_to_value(Cow::from(value_bytes.as_ref()))
-                            .map(|value| (key, value))
+                        T::bytes_to_value(Cow::from(value_bytes.as_ref())).map(|value| (key, value))
                     })
                 })
         })

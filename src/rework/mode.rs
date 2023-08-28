@@ -7,28 +7,22 @@ pub trait Mode: 'static {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ModeType {
     ReadOnly,
-    Secondary,
+    //Secondary,
     Writeable,
-    Transactional
-}
-
-impl ModeType {
-    pub fn is_primary(&self) -> bool {
-        *self == Self::Writeable || *self == Self::Transactional
-    }
+    //Transactional,
 }
 
 #[derive(Clone, Copy)]
 pub struct ReadOnly;
 
-#[derive(Clone, Copy)]
-pub struct Secondary;
+//#[derive(Clone, Copy)]
+//pub struct Secondary;
 
 #[derive(Clone, Copy)]
 pub struct Writeable;
 
-#[derive(Clone, Copy)]
-pub struct Transactional;
+//#[derive(Clone, Copy)]
+//pub struct Transactional;
 
 impl Mode for ReadOnly {
     fn mode_type() -> ModeType {
@@ -36,11 +30,11 @@ impl Mode for ReadOnly {
     }
 }
 
-impl Mode for Secondary {
+/*impl Mode for Secondary {
     fn mode_type() -> ModeType {
         ModeType::Secondary
     }
-}
+}*/
 
 impl Mode for Writeable {
     fn mode_type() -> ModeType {
@@ -48,11 +42,11 @@ impl Mode for Writeable {
     }
 }
 
-impl Mode for Transactional {
+/*impl Mode for Transactional {
     fn mode_type() -> ModeType {
         ModeType::Transactional
     }
-}
+}*/
 
 /*
 impl IsWriteable for Writeable {}
