@@ -1,14 +1,11 @@
 use rocksdb::merge_operator::MergeFn;
-use rocksdb::{
-    BoundColumnFamily, ColumnFamilyDescriptor, DBAccess, DBIteratorWithThreadMode,
-    DBWithThreadMode, IteratorMode, MultiThreaded, Options, SliceTransform, ThreadMode,
-    TransactionDB, TransactionDBOptions,
-};
+use rocksdb::{ColumnFamilyDescriptor, Options, SliceTransform};
 use std::borrow::Cow;
 use std::marker::PhantomData;
 use std::path::Path;
 use std::sync::Arc;
 
+pub mod db;
 pub mod error;
 pub mod iterators;
 pub mod mode;
@@ -129,181 +126,12 @@ impl TableConfig {
     }
 }
 
-pub trait Db: DBAccess + Sized {
-    type CfHandle<'a>
-    where
-        Self: 'a;
-
-    fn open<P: AsRef<Path>>(
-        options: &Options,
-        cf_descriptors: Vec<ColumnFamilyDescriptor>,
-        path: P,
-    ) -> Result<Self, error::Error>;
-    fn open_read_only<P: AsRef<Path>>(
-        options: &Options,
-        cf_descriptors: Vec<ColumnFamilyDescriptor>,
-        path: P,
-    ) -> Result<Self, error::Error>;
-
-    fn cf_handle(&self, name: &str) -> Option<Self::CfHandle<'_>>;
-    fn iterator(&self) -> DBIteratorWithThreadMode<'_, Self>;
-    fn prefix_iterator<P: AsRef<[u8]>>(&self, prefix: P) -> DBIteratorWithThreadMode<'_, Self>;
-
-    fn iterator_cf(&self, handle: &Self::CfHandle<'_>) -> DBIteratorWithThreadMode<'_, Self>;
-    fn prefix_iterator_cf<P: AsRef<[u8]>>(
-        &self,
-        handle: &Self::CfHandle<'_>,
-        prefix: P,
-    ) -> DBIteratorWithThreadMode<'_, Self>;
-
-    fn put<K: AsRef<[u8]>, V: AsRef<[u8]>>(&self, key: K, value: V) -> Result<(), rocksdb::Error>;
-    fn put_cf<K: AsRef<[u8]>, V: AsRef<[u8]>>(
-        &self,
-        handle: &Self::CfHandle<'_>,
-        key: K,
-        value: V,
-    ) -> Result<(), rocksdb::Error>;
-}
-
-impl Db for DBWithThreadMode<MultiThreaded> {
-    type CfHandle<'a> = Arc<BoundColumnFamily<'a>>;
-
-    fn open<P: AsRef<Path>>(
-        options: &Options,
-        cf_descriptors: Vec<ColumnFamilyDescriptor>,
-        path: P,
-    ) -> Result<Self, error::Error> {
-        if cf_descriptors.is_empty() {
-            Self::open(options, path).map_err(error::Error::from)
-        } else {
-            Self::open_cf_descriptors(options, path, cf_descriptors).map_err(error::Error::from)
-        }
-    }
-
-    fn open_read_only<P: AsRef<Path>>(
-        options: &Options,
-        cf_descriptors: Vec<ColumnFamilyDescriptor>,
-        path: P,
-    ) -> Result<Self, error::Error> {
-        if cf_descriptors.is_empty() {
-            Self::open_for_read_only(options, path, true).map_err(error::Error::from)
-        } else {
-            Self::open_cf_descriptors_read_only(options, path, cf_descriptors, true)
-                .map_err(error::Error::from)
-        }
-    }
-
-    fn cf_handle(&self, name: &str) -> Option<Self::CfHandle<'_>> {
-        self.cf_handle(name)
-    }
-
-    fn iterator(&self) -> DBIteratorWithThreadMode<'_, Self> {
-        self.iterator(IteratorMode::Start)
-    }
-
-    fn prefix_iterator<P: AsRef<[u8]>>(&self, prefix: P) -> DBIteratorWithThreadMode<'_, Self> {
-        self.prefix_iterator(prefix)
-    }
-
-    fn iterator_cf(&self, handle: &Self::CfHandle<'_>) -> DBIteratorWithThreadMode<'_, Self> {
-        self.iterator_cf(handle, IteratorMode::Start)
-    }
-
-    fn prefix_iterator_cf<P: AsRef<[u8]>>(
-        &self,
-        handle: &Self::CfHandle<'_>,
-        prefix: P,
-    ) -> DBIteratorWithThreadMode<'_, Self> {
-        self.prefix_iterator_cf(handle, prefix)
-    }
-
-    fn put<K: AsRef<[u8]>, V: AsRef<[u8]>>(&self, key: K, value: V) -> Result<(), rocksdb::Error> {
-        self.put(key, value)
-    }
-
-    fn put_cf<K: AsRef<[u8]>, V: AsRef<[u8]>>(
-        &self,
-        handle: &Self::CfHandle<'_>,
-        key: K,
-        value: V,
-    ) -> Result<(), rocksdb::Error> {
-        self.put_cf(handle, key, value)
-    }
-}
-
-impl Db for TransactionDB<MultiThreaded> {
-    type CfHandle<'a> = Arc<BoundColumnFamily<'a>>;
-
-    fn open<P: AsRef<Path>>(
-        options: &Options,
-        cf_descriptors: Vec<ColumnFamilyDescriptor>,
-        path: P,
-    ) -> Result<Self, error::Error> {
-        if cf_descriptors.is_empty() {
-            Self::open(options, &TransactionDBOptions::default(), path).map_err(error::Error::from)
-        } else {
-            Self::open_cf_descriptors(
-                options,
-                &TransactionDBOptions::default(),
-                path,
-                cf_descriptors,
-            )
-            .map_err(error::Error::from)
-        }
-    }
-
-    fn open_read_only<P: AsRef<Path>>(
-        options: &Options,
-        cf_descriptors: Vec<ColumnFamilyDescriptor>,
-        path: P,
-    ) -> Result<Self, error::Error> {
-        <Self as Db>::open(options, cf_descriptors, path)
-    }
-
-    fn cf_handle(&self, name: &str) -> Option<Arc<BoundColumnFamily<'_>>> {
-        self.cf_handle(name)
-    }
-
-    fn iterator(&self) -> DBIteratorWithThreadMode<'_, Self> {
-        self.iterator(IteratorMode::Start)
-    }
-
-    fn prefix_iterator<P: AsRef<[u8]>>(&self, prefix: P) -> DBIteratorWithThreadMode<'_, Self> {
-        self.prefix_iterator(prefix)
-    }
-
-    fn iterator_cf(&self, handle: &Self::CfHandle<'_>) -> DBIteratorWithThreadMode<'_, Self> {
-        self.iterator_cf(handle, IteratorMode::Start)
-    }
-
-    fn prefix_iterator_cf<P: AsRef<[u8]>>(
-        &self,
-        handle: &Self::CfHandle<'_>,
-        prefix: P,
-    ) -> DBIteratorWithThreadMode<'_, Self> {
-        self.prefix_iterator_cf(handle, prefix)
-    }
-
-    fn put<K: AsRef<[u8]>, V: AsRef<[u8]>>(&self, key: K, value: V) -> Result<(), rocksdb::Error> {
-        self.put(key, value)
-    }
-
-    fn put_cf<K: AsRef<[u8]>, V: AsRef<[u8]>>(
-        &self,
-        handle: &Self::CfHandle<'_>,
-        key: K,
-        value: V,
-    ) -> Result<(), rocksdb::Error> {
-        self.put_cf(handle, key, value)
-    }
-}
-
-pub struct Database<M: mode::Mode, D: Db> {
+pub struct Database<M: mode::Mode, D: db::Db> {
     pub db: Arc<D>,
     _mode: PhantomData<M>,
 }
 
-impl<M: mode::Mode, D: Db> Database<M, D> {
+impl<M: mode::Mode, D: db::Db> Database<M, D> {
     pub fn open<P: AsRef<Path>>(config: TableConfig, path: P) -> Result<Self, error::Error> {
         let (mut base_options, cf_descriptors) = config.parts();
         base_options.create_if_missing(true);
@@ -364,7 +192,7 @@ impl<M: mode::Mode, D: Db> Database<M, D> {
     }
 }
 
-impl<D: Db> Database<mode::Writeable, D> {
+impl<D: db::Db> Database<mode::Writeable, D> {
     pub fn put<const N: usize, T: Table<N>>(
         &self,
         table: &NamedTable<T>,
@@ -394,7 +222,7 @@ impl<D: Db> Database<mode::Writeable, D> {
 mod tests {
     use super::*;
     use chrono::{DateTime, TimeZone, Utc};
-    use rocksdb::{MergeOperands, DB};
+    use rocksdb::{DBWithThreadMode, MultiThreaded, MergeOperands};
 
     #[derive(thiserror::Error, Debug)]
     pub enum Error {
