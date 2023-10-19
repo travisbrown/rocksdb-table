@@ -6,4 +6,6 @@ pub enum Error {
     InvalidKey(Vec<u8>),
     #[error("Invalid value bytes")]
     InvalidValue(Vec<u8>),
+    #[error("Invalid column family name")]
+    InvalidCfName(String),
 }
