@@ -6,14 +6,10 @@
 This library is intended to capture some common patterns I use for working with [RocksDB][rocksdb]
 and [rust-rocksdb][rust-rocksdb].
 
-Please note that this software is **not** "open source",
-but the source is available for use and modification by individuals, non-profit organizations, and worker-owned businesses
-(see the [license section](#license) below for details).
-
 ## License
 
-This software is published under the [Anti-Capitalist Software License][acsl] (v. 1.4).
+This software is published under the [GNU General Public License v3.0][gplv3].
 
-[acsl]: https://anticapitalist.software/
+[gplv3]: https://www.gnu.org/licenses/gpl-3.0.en.html
 [rocksdb]: https://rocksdb.org
 [rust-rocksdb]: https://github.com/rust-rocksdb/rust-rocksdb
